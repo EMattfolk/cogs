@@ -1,15 +1,21 @@
-/// statement := <comment> | <expression>
-/// expression := <functioncall> | <string>
-/// name := [a-zA-Z_][a-zA-Z_0-9-]*
-/// comment := //.*
-/// functioncall := <name>(<expression>)
-/// string := ".*?" | '.*?'
+/// statement => <comment> | <tree>
+///
+/// variable => [a-zA-Z_][a-zA-Z_0-9-]*
+/// varop => <variable> | <assignment>
+///
+/// functioncall => <expression>(<expression>)
+/// comment => //.*
+/// string => ".*?" | '.*?'
+/// number => -?[0-9]+
+///
+/// tree => <ifstatement> | <arithmetic>
+/// arithmetic => <subarithmetic> | <subarithmetic> [+-] <subarithmetic>
+/// subarithmetic => <basearithmetic> | <basearithmetic> [/*] <basearithmetic>
+/// basearithmetic => <expression> | <expression> [**] <expression>
+/// expression => (<tree>) | <varop> | <number> | <string> | <functioncall>
 ///
 ///
 /// TODO:
-///     Variables
-///
-///     Numbers
 ///     Arithmetic
 ///
 ///     if
@@ -25,16 +31,21 @@ extern crate lazy_static;
 use regex::Regex;
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{BufReader, BufRead};
 
 trait CogObject {
 
     fn to_string(&self) -> String;
 
-    fn call(&self, _arg: Box<dyn CogObject>) -> Box<dyn CogObject> {
+    fn call(&mut self, _arg: Box<dyn CogObject>) -> Box<dyn CogObject> {
         panic!("Object is not callable!")
     }
+
+    fn cloned(&self) -> Box<dyn CogObject>;
 }
 
+#[derive(Clone)]
 struct CogString {
     data: String
 }
@@ -44,8 +55,13 @@ impl CogObject for CogString {
     fn to_string(&self) -> String {
         self.data.clone()
     }
+
+    fn cloned(&self) -> Box<dyn CogObject> {
+        Box::new(self.clone())
+    }
 }
 
+#[derive(Clone)]
 struct CogNone;
 
 impl CogObject for CogNone {
@@ -53,8 +69,13 @@ impl CogObject for CogNone {
     fn to_string(&self) -> String {
         "None".to_string()
     }
+
+    fn cloned(&self) -> Box<dyn CogObject> {
+        Box::new(self.clone())
+    }
 }
 
+#[derive(Clone)]
 struct CogInt {
     data: i128
 }
@@ -64,8 +85,13 @@ impl CogObject for CogInt {
     fn to_string(&self) -> String {
         self.data.to_string()
     }
+
+    fn cloned(&self) -> Box<dyn CogObject> {
+        Box::new(self.clone())
+    }
 }
 
+#[derive(Clone)]
 struct CogFn {
     data: fn(Box<dyn CogObject>) -> Box<dyn CogObject>
 }
@@ -76,8 +102,12 @@ impl CogObject for CogFn {
         "Function".to_string()
     }
 
-    fn call(&self, arg: Box<dyn CogObject>) -> Box<dyn CogObject> {
+    fn call(&mut self, arg: Box<dyn CogObject>) -> Box<dyn CogObject> {
         (self.data)(arg)
+    }
+
+    fn cloned(&self) -> Box<dyn CogObject> {
+        Box::new(self.clone())
     }
 }
 
@@ -95,7 +125,7 @@ impl Interpreter {
         intr
     }
 
-    fn interpret_statement(&self, line: &str) {
+    fn interpret_statement(&mut self, line: &str) {
         lazy_static! {
             static ref COMMENT_RE: Regex = Regex::new("//.*").unwrap();
         }
@@ -107,11 +137,18 @@ impl Interpreter {
         }
     }
 
-    fn interpret_expression(&self, expr: &str) -> Box<dyn CogObject> {
+    fn interpret_expression(&mut self, expr: &str) -> Box<dyn CogObject> {
         lazy_static! {
             static ref FUNCTION_CALL_RE: Regex =
                 Regex::new("(^[a-zA-Z_][a-zA-Z_0-9-]*)\\((.*)\\)").unwrap();
-            static ref STRING_RE: Regex = Regex::new("^\"(.*?)\"|^'(.*?)'").unwrap();
+            static ref STRING_RE: Regex =
+                Regex::new("^\"(.*?)\"|^'(.*?)'").unwrap();
+            static ref NUMBER_RE: Regex =
+                Regex::new("^(-?\\d+)").unwrap();
+            static ref VARIABLE_RE: Regex =
+                Regex::new("(^[a-zA-Z_][a-zA-Z_0-9-]*)").unwrap();
+            static ref ASSIGNMENT_RE: Regex =
+                Regex::new("(^[a-zA-Z_][a-zA-Z_0-9-]*)\\s*=\\s*([^\\s].*)").unwrap();
         }
 
         if FUNCTION_CALL_RE.is_match(expr) {
@@ -126,17 +163,50 @@ impl Interpreter {
 
             Box::new(CogString{data: contents})
 
+        } else if NUMBER_RE.is_match(expr) {
+            let cap = NUMBER_RE.captures(expr).unwrap();
+
+            Box::new(CogInt{data: cap[1].parse().unwrap()})
+
+        } else if ASSIGNMENT_RE.is_match(expr) {
+            let cap = ASSIGNMENT_RE.captures(expr).unwrap();
+
+            let value = self.interpret_expression(&cap[2]);
+            self.variables.insert(cap[1].to_string(), value.cloned());
+
+            value
+
+        } else if VARIABLE_RE.is_match(expr) {
+            let cap = VARIABLE_RE.captures(expr).unwrap();
+
+            match self.variables.get(&cap[1]) {
+                Some(v) => (*v).cloned(),
+                None => panic!("No such variable: '{}'", &cap[1])
+            }
+
         } else if expr == "" {
+
             Box::new(CogNone)
+
         } else {
             panic!("Error parsing expression: '{}'", expr)
         }
     }
 
-    fn interpret_functioncall(&self, function: &str, args: &str) -> Box<dyn CogObject> {
-        match self.variables.get(function) {
-            Some(f) => f.call(self.interpret_expression(args)),
+    fn interpret_functioncall(&mut self, function: &str, args: &str) -> Box<dyn CogObject> {
+        let argv = self.interpret_expression(args);
+        match self.variables.get_mut(function) {
+            Some(f) => f.call(argv),
             None => panic!("No varible named '{function}'")
+        }
+    }
+
+    fn execute_script(&mut self, file_name: &str) {
+        let file = File::open(file_name).unwrap();
+        let reader = BufReader::new(file);
+
+        for line in reader.lines().filter_map(|l| l.ok()) {
+            self.interpret_statement(&line);
         }
     }
 }
@@ -148,12 +218,6 @@ fn cog_print(arg: Box<dyn CogObject>) -> Box<dyn CogObject> {
 }
 
 fn main() {
-    let interpreter = Interpreter::new();
-
-    interpreter.interpret_statement("// Comment");
-    interpreter.interpret_statement("print(print())");
-    interpreter.interpret_statement("print('')");
-    interpreter.interpret_statement("print(\"Hello world\")");
-    interpreter.interpret_statement("print('Hello world')");
-//    interpret_statement("9print('Hello world')");
+    let mut interpreter = Interpreter::new();
+    interpreter.execute_script("prototype.co");
 }

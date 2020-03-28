@@ -1,3 +1,16 @@
 // Comment
-
+print(print())
+print('')
 print("Hello world")
+print('Hello world')
+print(-93981823)
+print(print)
+
+
+funf = five = fem = 5
+print(funf)
+print(five)
+print(fem)
+
+string = 'Yeet'
+print(string)
