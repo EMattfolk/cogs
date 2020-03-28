@@ -36,13 +36,21 @@ use std::io::{BufReader, BufRead};
 
 trait CogObject {
 
-    fn to_string(&self) -> String;
+    fn to_string(&self) -> String { String::new() }
+
+    fn to_int(&self) -> i128 { 0 }
 
     fn call(&mut self, _arg: Box<dyn CogObject>) -> Box<dyn CogObject> {
         panic!("Object is not callable!")
     }
 
     fn cloned(&self) -> Box<dyn CogObject>;
+
+    fn plus(&self, _other: Box<dyn CogObject>) -> Box<dyn CogObject> {
+        panic!("Object cannot be summmed!")
+    }
+
+    fn cog_type(&self) -> &str;
 }
 
 #[derive(Clone)]
@@ -59,6 +67,10 @@ impl CogObject for CogString {
     fn cloned(&self) -> Box<dyn CogObject> {
         Box::new(self.clone())
     }
+
+    fn cog_type(&self) -> &str {
+        "string"
+    }
 }
 
 #[derive(Clone)]
@@ -73,6 +85,10 @@ impl CogObject for CogNone {
     fn cloned(&self) -> Box<dyn CogObject> {
         Box::new(self.clone())
     }
+
+    fn cog_type(&self) -> &str {
+        "none"
+    }
 }
 
 #[derive(Clone)]
@@ -86,8 +102,28 @@ impl CogObject for CogInt {
         self.data.to_string()
     }
 
+    fn to_int(&self) -> i128 {
+        self.data
+    }
+
     fn cloned(&self) -> Box<dyn CogObject> {
         Box::new(self.clone())
+    }
+
+    fn plus(&self, other: Box<dyn CogObject>) -> Box<dyn CogObject> {
+        if self.cog_type() != other.cog_type() {
+            panic!(
+                "Cannot sum type '{}' with type '{}'",
+                self.cog_type(),
+                other.cog_type()
+            );
+        }
+
+        Box::new(CogInt{data: self.to_int() + other.to_int()})
+    }
+
+    fn cog_type(&self) -> &str {
+        "int"
     }
 }
 
@@ -108,6 +144,10 @@ impl CogObject for CogFn {
 
     fn cloned(&self) -> Box<dyn CogObject> {
         Box::new(self.clone())
+    }
+
+    fn cog_type(&self) -> &str {
+        "function"
     }
 }
 
@@ -149,6 +189,33 @@ impl Interpreter {
                 Regex::new("(^[a-zA-Z_][a-zA-Z_0-9-]*)").unwrap();
             static ref ASSIGNMENT_RE: Regex =
                 Regex::new("(^[a-zA-Z_][a-zA-Z_0-9-]*)\\s*=\\s*([^\\s].*)").unwrap();
+            static ref PLUS_RE: Regex =
+                Regex::new(r"(.+?)\s*\+\s*(.+)").unwrap();
+        }
+
+        if ASSIGNMENT_RE.is_match(expr) {
+            let cap = ASSIGNMENT_RE.captures(expr).unwrap();
+
+            let value = self.interpret_expression(&cap[2]);
+            self.variables.insert(cap[1].to_string(), value.cloned());
+
+            return value;
+
+        } else if PLUS_RE.is_match(expr) {
+            let cap = PLUS_RE.captures(expr).unwrap();
+
+            let left_p: i32 = cap[1].chars().map(
+                |c| if c == '(' { 1 } else if c == ')' { -1 } else { 0 }
+                ).sum();
+
+            let right_p: i32 = cap[2].chars().map(
+                |c| if c == '(' { 1 } else if c == ')' { -1 } else { 0 }
+                ).sum();
+
+            if left_p == 0 && right_p == 0 {
+                return self.interpret_expression(&cap[1])
+                    .plus(self.interpret_expression(&cap[2]));
+            }
         }
 
         if FUNCTION_CALL_RE.is_match(expr) {
@@ -167,14 +234,6 @@ impl Interpreter {
             let cap = NUMBER_RE.captures(expr).unwrap();
 
             Box::new(CogInt{data: cap[1].parse().unwrap()})
-
-        } else if ASSIGNMENT_RE.is_match(expr) {
-            let cap = ASSIGNMENT_RE.captures(expr).unwrap();
-
-            let value = self.interpret_expression(&cap[2]);
-            self.variables.insert(cap[1].to_string(), value.cloned());
-
-            value
 
         } else if VARIABLE_RE.is_match(expr) {
             let cap = VARIABLE_RE.captures(expr).unwrap();
