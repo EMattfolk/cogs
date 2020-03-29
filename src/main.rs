@@ -68,6 +68,18 @@ impl CogObject for CogString {
         Box::new(self.clone())
     }
 
+    fn plus(&self, other: Box<dyn CogObject>) -> Box<dyn CogObject> {
+        if self.cog_type() != other.cog_type() {
+            panic!(
+                "Cannot sum type '{}' with type '{}'",
+                self.cog_type(),
+                other.cog_type()
+            );
+        }
+
+        Box::new(CogString{data: self.to_string() + &other.to_string()})
+    }
+
     fn cog_type(&self) -> &str {
         "string"
     }
